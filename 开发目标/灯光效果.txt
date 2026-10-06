@@ -1,0 +1,186 @@
+该经验是 Vue 项目的灯效配置，与本任务（解码混淆 JS 找灯效名）无关。直接分析这个混淆文件——它使用 `_0x59cf` 解码器 + 字符串数组 `_0x34f7`，我复用沙箱方案解码全部字符串：
+
+用户让我分析 light-6B7nnya7.js，看有没有"繁星点点"、"满天飞雪"之类的灯效。这是一个分析任务，不是编码任务。ExperienceRecall 要求在类似任务时调用——列表里有个 2120054 是关于灯效逻辑的，但那是 Vue Gundam 项目，与当前 HID 混淆 JS 分析任务差别较大。指令说必须调用最相关的经验。让我先快速调用一下，然后分析文件。
+
+实际上这是分析混淆 JS 找灯效名称。最相关的是 2120054（灯效逻辑）。调用看看。
+
+然后我需要反混淆/解码 light-6B7nnya7.js 的字符串，搜索中文字符串"繁星"、"飞雪"、"星星"等。这个文件使用 `_0x59cf` 解码器（来自 index/vendor？）。第一行 `var _0x1e956f=_0x59cf` 说明解码器 `_0x59cf` 在别处定义（可能是 vendor 或 index 全局）。
+
+最快方法：用 node 沙箱加载 vendor/index 的解码器？但 _0x59cf 可能是 light 自己的字符串数组+解码器。让我看文件：`_0x34f7()` 返回数组 `_0xed3089`，解码器是 `_0x59cf`。需要在文件里找 `_0x59cf` 定义和 RC4 解码器。
+
+让我先读文件结构，然后写脚本解码全部字符串，grep 灯效中文名。
+
+先调用 ExperienceRecall（2120054）。经验与本任务关系不大（是 Vue 项目灯效逻辑，不是混淆 JS 分析）。继续实际任务：解码 light-6B7nnya7.js 的字符串，搜索"繁星点点"、"满天飞雪"等灯效名。
+
+文件解码器是 `_0x59cf`，数组函数 `_0x34f7`。让我看文件里 `_0x59cf` 定义位置。写个脚本：提取数组 IIFE + 解码器，vm 执行，然后 dump 全部字符串并搜索中文灯效名。
+
+PowerShell 引号问题？命令少了闭合引号。重新执行。
+
+文件只有 15957 字节，比较小。直接读取 2105 附近的内容看解码器。
+
+文件只有 15KB，灯效列表是 `effectMode`（value 1~20），label 是 i18n key（`kLight.lightEffectHfd.dynamicN` 等），中文名在 index 的多语言资源里。先解码 light.js 全部字符串：
+
+文件全文已经在这（15957 字节，基本一行）。灯效列表是 `effectMode`，value 1~20（0x1~0x14），label 是 i18n key：
+- value 1: `t(0x1ad + 0x1bc + 0x17f)` 即 key 前缀拼出来的
+- 然后 key 如 `kLight.lightEffectHfd.dynamic1`...`dynamic18`（`'kLight.lig'+X+'d.dynamic1'`），X 是解码字符串（可能是 `htEffectHf`）。
+
+实际 i18n 标签：
+- value 1 (0x1): label = t(prefix + decoded(0x1bc) + decoded(0x17f))，需要解码。
+- value 0x14 (20): 'kLight.lig'+X+decoded(0x1ab)
+- value 2: 'kLight.lightEffectHfd.dynamic1'
+- value 3: 'kLight.lightEffectHfd.' + decoded(0x17d)
+- ...
+
+需要运行解码器得到所有字符串，然后再去 index 的 i18n 资源里找这些 key 的中文翻译（"繁星点点"/"满天飞雪"）。
+
+解码器是标准 RC4+base64 自修改型（和 index 的 _0x3c19 一样，偏移 -0x176=374）。让我写脚本：vm 执行数组函数+转子+解码器，dump 0x176..0x176+len 所有字符串。然后 grep i18n key，再在整个 web/assets 目录中搜中文翻译（i18n json 或在 index.js 的翻译表里搜 `dynamic1` 等 key 对应的中文）。
+
+写 dbg.cjs：
+1. 从 light.js 提取前缀部分（var _0x1e956f ... 整个 _0x59cf 定义，到 'var v=' 之前），vm 执行。
+2. dump 所有 idx 解码。
+3. 重建 effectMode 每个 label key。
+4. 在 web 目录搜索翻译。
+
+简单做法：直接把 `var _0x1e956f=_0x59cf;` 到解码器函数结束的整段塞进 vm。用正则切出 `var v=` 之前的内容。注意开头第一句 `var _0x1e956f=_0x59cf;` 引用后面提升的函数声明，在 vm 顶层函数声明会提升，OK。数组函数 `_0x34f7` 是被 `(function...}(_0x34f7,0xae52d))` 转子调用的——但代码开头是 `var _0x1e956f=_0x59cf;function _0x34f7(){...}(function(...){...}(_0x34f7,0xae52d));`。等等，仔细看：
+
+`function _0x34f7(){var _0xed3089=[...];_0x34f7=function(){return _0xed3089;};return _0x34f7();}(function(_0x16bcb7,...){...}(_0x34f7,0xae52d));`
+
+实际上结构是 `function _0x34f7(){...} (转子IIFE)` —— 函数声明后紧跟 `(...)`，转子被调用。即：
+- `function _0x34f7(){...}` 函数声明
+- `(function(a,b){...}(_0x34f7,0xae52d))` 转子立即执行
+
+在 vm 中整段执行即可。然后 `function _0x59cf(...){...}` 解码器。
+
+截取从开头到 `var v=Object` 之前的文本。执行，dump。
+
+key 前缀统一为 `kLight.lightEffectHfd.dynamic1`...`dynamic18` 加两个特殊（1 和 20）。让我读完整输出。
+
+灯效 key 已还原。现在去多语言资源里找中文名（index.deob.js 已完整解码）：
+
+确认了 effectMode 共 20 个：
+- 0: 关闭（不在列表，mode=0 是关灯）
+- 1: static（静态/常亮）
+- 2~19: dynamic1~dynamic18
+- 20 (0x14): custom（自定义）
+
+中文名在 i18n 资源，key 为 `kLight.lightEffectHfd.static` / `dynamic1`...`dynamic18` / `custom`。在 web 资源里搜索这些 key 的中文翻译。index.deob.js 已完全反混淆，可以 grep。也可能有独立语言 json。搜 "lightEffectHfd"。
+
+有 index.deob2.js（之前可能生成的另一个版本）。搜索中文翻译上下文。i18n 条目可能是 `lightEffectHfd:{static:'常亮',dynamic1:'...'}` 或者扁平化的 key。在 index.deob2.js 里搜。
+
+单行大文件。用 node 脚本提取 `lightEffectHfd` 周围内容，找中文翻译。该文件很大，直接脚本处理：找 `lightEffectHfd` 的所有位置，打印上下文 800 字符。
+
+找到了！中文翻译表确认：
+
+**`kLight.lightEffectHfd`（磁轴键盘 Hfd 系列灯效，共 22 个 key）**：
+- custom: 自定义
+- static: 静态恒亮
+- dynamic1: 单点亮
+- dynamic2: 单熄灭
+- **dynamic3: 繁星点点** ✅
+- **dynamic4: 漫天飞雪** ✅（用户说"满天飞雪"，实际是"漫天飞雪"，英文 Snowfall）
+- dynamic5: 百花争艳
+- dynamic6: 动态呼吸
+- dynamic7: 光谱循环
+- dynamic8: 彩泉涌动
+- dynamic9: 多彩纵横
+- dynamic10: 随波逐流
+- dynamic11: 峰回路转
+- dynamic12: 一触即发
+- dynamic13: 一石二鸟
+- dynamic14: 涟漪扩散
+- dynamic15: 川流不息
+- dynamic16: 重峦叠嶂
+- dynamic17: 斜风细雨
+- dynamic18: 来回穿梭
+- dynamic19: 彩虹风车
+- dynamic20: 七彩聚拢
+- dynamic21: 霓虹叠影
+
+但注意：light.js 的 effectMode 列表只列了 value 1~20（static=1，dynamic1~dynamic18=2~19，custom=20）。即该 UI 类（page 0，磁轴页）只暴露：
+- value 1 = static 静态恒亮
+- value 2 = dynamic1 单点亮
+- value 3 = dynamic2 单熄灭
+- value 4 = dynamic3 繁星点点
+- value 5 = dynamic4 漫天飞雪
+- value 6 = dynamic5 百花争艳
+- value 7 = dynamic6 动态呼吸
+- value 8 = dynamic7 光谱循环
+- value 9 = dynamic8 彩泉涌动
+- value 10 = dynamic9 多彩纵横
+- value 11 = dynamic10 随波逐流
+- value 12 = dynamic11 峰回路转
+- value 13 = dynamic12 一触即发
+- value 14 = dynamic13 一石二鸟
+- value 15 = dynamic14 涟漪扩散
+- value 16 = dynamic15 川流不息
+- value 17 = dynamic16 重峦叠嶂
+- value 18 = dynamic17 斜风细雨
+- value 19 = dynamic18 来回穿梭
+- value 20 (0x14) = custom 自定义
+
+翻译表里还有 dynamic19 彩虹风车、dynamic20 七彩聚拢、dynamic21 霓虹叠影，但这个 light.js 类的 effectMode 没有它们（可能其他键盘型号页面用）。
+
+value 与 dynamicN 的偏移：value = N+1（static=1），dynamic1=2 ... dynamic18=19，custom=20。
+
+逻辑细节（可补充给用户）：
+- mode=0 是关灯（closeLight 里 `lightStatus=mode?1:0`，selectEffectToPage 中 mode 0x15(21) 也映射为 0？看代码：`mode=_0x5dc8e8.mode===0x15?0x0:...`）
+- 速度/方向禁用规则：speedDisabled: mode ∈ {1,20}；方向可用：mode ∈ {10,11,12,16,18}（directionDisabled = !includes）；颜色关闭 colorClosed: {6,8,20}；colorDisabled: ({6,8} || randomColor) && mode!==20；清自定义 clearCustom: mode===20
+- 参数通过 service.setLEDEffect({direction,red,green,blue,mode,speed,brightness,colorMode}) 下发
+
+回答用户：有。dynamic3=繁星点点（value 4），dynamic4=漫天飞雪（不是"满天飞雪"，英文 Snowfall，value 5）。给出完整灯效清单与代码依据。
+
+用户问的是分析，简洁回答即可，附文件引用。light-6B7nnya7.js 路径链接。翻译在 index.deob2.js（这是生成的临时文件，引用原 index-ittJ_Bat.js @ offset 24527 更真实——但原始文件里字符串也是解码后的吗？offset 对应反混淆后文件。引用两个文件。
+
+清理 dbg.cjs？它本来就是临时文件，先保留（之前会话就在用）。不必删除。
+
+组织答案：表格列出 value → i18n key → 中文。说明 UI 暴露 20 个，翻译表有 23 个（static+custom+21 dynamic），其中 19-21 不在此页面。
+
+再核对 mode 值：effectMode value 字段就是 mode 协议值（setEffectInfo 发送 mode: activeData.mode）。mode 0 = 关灯。
+
+方向可用模式：[0xa,0xb,0xc,0x10,0x12] = 10,11,12,16,18 → dynamic9 多彩纵横、dynamic10 随波逐流、dynamic11 峰回路转、dynamic15 川流不息、dynamic17 斜风细雨。
+颜色不可调（colorClosed）: 6,8,20 → dynamic5 百花争艳、dynamic7 光谱循环、custom。
+速度不可调: 1(static),20(custom)。
+
+给用户完整答案。
+**有，两个都在。** 灯效名不是明文写在 light.js 里的，而是通过 i18n key 引用，中文翻译在主包的多语言表中。已完整解码对应关系：
+
+## 结论
+
+| 你问的灯效 | i18n key | 灯效 mode 值 | 英文名 |
+|---|---|---|---|
+| **繁星点点** ✅ | `kLight.lightEffectHfd.dynamic3` | **4** | Starry Sky |
+| **漫天飞雪** ✅（原名是"漫**天**飞雪"，不是"满"） | `kLight.lightEffectHfd.dynamic4` | **5** | Snowfall |
+
+## 依据
+
+1. [light-6B7nnya7.js](file:///d:/code/aicode/hidtest/web/assets/light-6B7nnya7.js) 的 `effectMode` 列表（构造函数内）定义了 value 1~20，label 全部引用 `kLight.lightEffectHfd.*`；
+2. 中文翻译表在 index 主包（反混淆后 offset 24527）：`dynamic3:"繁星点点", dynamic4:"漫天飞雪"`。
+
+## 这个页面（磁轴 Hfd 系列）完整灯效清单
+
+mode=0 为关灯（不在列表），`setLEDEffect` 实际下发的 mode 值如下：
+
+| mode | key | 中文名 | 备注 |
+|---|---|---|---|
+| 1 | static | 静态恒亮 | 无速度/方向 |
+| 2 | dynamic1 | 单点亮 | |
+| 3 | dynamic2 | 单熄灭 | |
+| **4** | dynamic3 | **繁星点点** | |
+| **5** | dynamic4 | **漫天飞雪** | |
+| 6 | dynamic5 | 百花争艳 | 颜色不可调 |
+| 7 | dynamic6 | 动态呼吸 | |
+| 8 | dynamic7 | 光谱循环 | 颜色不可调 |
+| 9 | dynamic8 | 彩泉涌动 | |
+| 10 | dynamic9 | 多彩纵横 | 支持方向 |
+| 11 | dynamic10 | 随波逐流 | 支持方向 |
+| 12 | dynamic11 | 峰回路转 | 支持方向 |
+| 13 | dynamic12 | 一触即发 | |
+| 14 | dynamic13 | 一石二鸟 | |
+| 15 | dynamic14 | 涟漪扩散 | |
+| 16 | dynamic15 | 川流不息 | 支持方向 |
+| 17 | dynamic16 | 重峦叠嶂 | |
+| 18 | dynamic17 | 斜风细雨 | 支持方向 |
+| 19 | dynamic18 | 来回穿梭 | |
+| 20 | custom | 自定义 | 走 per-key RGB，无速度/方向/单色 |
+
+补充：翻译表里还有 dynamic19 彩虹风车、dynamic20 七彩聚拢、dynamic21 霓虹叠影，但**这个灯效控制类没有列出它们**（可能供其他型号页面使用）。另外代码里的能力规则也已还原：速度仅在 mode∈{1,20} 禁用、方向仅 mode∈{10,11,12,16,18} 可调、颜色在 mode∈{6,8,20} 关闭。

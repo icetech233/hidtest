@@ -1,0 +1,16 @@
+*.exe
+*.dll
+*.pdb
+
+/bin
+/obj
+
+/bin/*
+/obj/*
+
+.vs/
+.vs
+
+
+obj/Debug
+obj/Debug/*

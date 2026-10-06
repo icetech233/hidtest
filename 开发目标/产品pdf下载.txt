@@ -1,0 +1,351 @@
+The user is looking at the AULA keyboard tool output. The output says something like "说明: 云端接口封装在 index-DUu2k-Ps.js / index-FdpB5Nbp.js（本地暂缺），拿到后即可把"检索名"换成接口返回的真实文件名。"
+
+But the user says these JS files exist locally (they're probably in the web folder, e.g., D:\code\aicode\hidtest\web\assets\). The memory mentions analyzing D:\code\aicode\hidtest\web\assets\index-ittJ_Bat.js earlier, and hid-js-docs docs were written.
+
+So the C# code has a "firmware map" or "pdf map" logic that references these JS files to extract the real file names, but the C# code looks for them in a specific location and reports "本地暂缺" (locally missing). The user says the files ARE local. So the path being checked is wrong — probably the C# code looks for exact filenames like index-DUu2k-Ps.js in a directory where the actual files have different names (the hash-based names change per build), or it looks in a wrong folder.
+
+Let me explore the aula directory to find where this message is generated. The output text "产品说明书 / 固件（按 pId/pName 映射）" appears to be printed by some printer class — likely in Aula.Output or Aula.Firmware — maybe FirmwareCatalog or PdfLinkPrinter. Program.cs calls DeviceInfoPrinter.PrintPdfLink(hit.Definition).
+
+Let me search the codebase for "本地暂缺" or "index-DUu2k-Ps" strings.
+
+The message "本地暂缺" is hardcoded in DeviceInfoPrinter.cs. The user says the JS files are local. Let me check where the JS files actually are. The memory says web/assets/index-ittJ_Bat.js was analyzed before. Let me check what index-*.js files exist in web/assets.
+
+这两个 JS 文件明明就在 `web\assets\` 下，注释里却写死“本地暂缺”。先读一下这两个文件，把真实的云端接口逻辑提取出来，替换掉硬编码。
+The files ARE local: `web\assets\index-DUu2k-Ps.js` and `web\assets\index-FdpB5Nbp.js` exist. The earlier analysis even documented the APIs in hid-js-docs/JS文件说明.md:
+- index-DUu2k-Ps.js: GET /user/PDF/getFileName, params {pid, vid, productName}, returns PDF file name
+- index-FdpB5Nbp.js: gets latest firmware version info by product model, returns {version, fileName}
+
+So the fix: instead of hardcoding "本地暂缺", read the actual API from these JS files and implement the real logic — query the cloud API to get the real file name, then build the PDF link. Let me read the two JS files to extract exact API details (base URL, method, params, response shape).
+
+文件被混淆了，但之前的分析文档已经拆过。读一下文档确认接口的完整定义（base URL、参数、返回结构）。
+These are obfuscated. The docs in hid-js-docs/JS文件说明.md already say:
+- index-DUu2k-Ps.js: GET /user/PDF/getFileName, params {pid, vid, productName}
+- index-FdpB5Nbp.js: gets latest firmware info by product model, returns {version, fileName}
+
+But I need the base URL. Let me check the docs more fully, and also search the deobfuscated files or docs for the API base URL. Let me read the JS文件说明.md fully.
+
+The docs describe the two API files. But I need the details to implement the actual cloud call in C#:
+
+1. `index-DUu2k-Ps.js`: GET `/user/PDF/getFileName`, params {pid, vid, productName}. But what's the base URL? It uses `import {n as _0x384f07} from './index-ittJ_Bat.js'` — the axios instance from the main package. I need the baseURL from index-ittJ_Bat.js.
+
+2. `index-FdpB5Nbp.js`: `{'method':'get','url': _0x453b(0xf5) + _0x453b(0xf6) + _0x565972}` — need to decode those strings. Let me decode the Base64-ish strings.
+
+The obfuscation uses a custom Base64 with alphabet 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/=' and then URI decode.
+
+The array for index-FdpB5Nbp.js (_0x1b8a):
+```
+['z2v0rMLSzs8','nZmZnde1zxzkv0HU','mtyXodC2nfbSEMz1Ba','mJyZmta1nNbdrxbqAq','mtaYodm3ognVy1j5uG','odyWEeP0v1jl','nti3mJmYtwPbzxDA','mtHcr3vLBe8','ngfrC3bYsW','mtaWodq1t01gAuzu','nJiYoduWr0fruhb3','l3vZzxiVrvHflW']
+```
+
+Index lookup: `_0x453b(0xf5)`: 0xf5-0xf1 = 4 → 'mtaYodm3ognVy1j5uG', `_0x453b(0xf6)`: 5 → 'odyWEeP0v1jl'.
+
+But wait — the IIFE at the top rotates the array until the checksum matches. So the array might be rotated! The rotation loop: it pushes shift() until checksum matches. So I can't just index directly; I need to simulate.
+
+Actually let me just decode with the custom base64 after simulating rotation. That's complex. Alternative: check version-DZbqs6RB.deob.js which is the deobfuscated version of the consumer of these APIs (getPDF/getDownloadUrl). It should show how the APIs are called and what the response handling looks like, plus possibly the base URL logic.
+
+Let me read version-DZbqs6RB.deob.js.
+
+拿到了调用侧的完整逻辑。现在找主包里 axios 实例的 baseURL（云端 API 域名），以及固件接口的完整 URL。
+Now I can see the actual usage:
+
+`getPDF()`:
+```js
+_0x619095({'pid': _0x3dea4b, 'vid': _0x3dea4b, 'productName': _0x3dea4b})  // all three = the same product name string!
+    .then(res => { this.activeData.pdfUrl = _0x31c3ef + res; })  // Z constant + returned filename
+```
+Note: pid/vid params are actually the product NAME (weird but that's what the JS does — they pass the name string as pid, vid, productName).
+
+`getDownloadUrl()`:
+```js
+_0x2af24c(_0x2aa62d)  // product name string
+    .then(res => { latestVersion = res.version; downloadUrl = au + res.fileName; })
+```
+
+Prefixes: Z (pdfUrl) and au (downloadUrl) are imported from index-ittJ_Bat.js. The C# code already has these as PdfBaseUrl = "https://app.aulacn.com/pdf/" and CommonAssetsBaseUrl = "https://app.aulacn.com/commonAssets/". Presumably those were already extracted correctly (the printer output shows those prefixes).
+
+Now I need the API base URL for `/user/PDF/getFileName` and the firmware endpoint. The request goes through the axios instance `n` from index-ittJ_Bat.js. I need to find the baseURL in index-ittJ_Bat.js (or index.deob2.js).
+
+Let me search for baseURL in the deobfuscated main package.
+
+The deob file is minified (one long line). Let me search with context around specific strings. Let me grep for the URL pattern more specifically with a small extraction. Better: use PowerShell to extract substrings around "baseURL" occurrences.
+
+找到关键信息了：API baseURL 是 `https://hubapi.aulacn.com/`。还需要解码 `index-FdpB5Nbp.js` 里固件接口的 URL 路径，并确认响应结构。用 JS 模拟它的字符串解码器。
+Found the key info:
+
+```js
+const ea = "https://hu" + "bapi.aulac" + "n.com/",  // https://hubapi.aulacn.com/
+e5 = axios.create({ baseURL: ea, timeout: 0x4e20 (20000ms), adapter: $i() });
+e5.interceptors.request.use(config => { token = _0()["token"]; if (token) headers.Authorization = "Bearer " + token; })
+```
+
+So the API base is `https://hubapi.aulacn.com/`.
+
+- PDF API: GET `https://hubapi.aulacn.com/user/PDF/getFileName?pid=NAME&vid=NAME&productName=NAME` (note: all three params are the product NAME string, per getPDF() call: `{'pid': name, 'vid': name, 'productName': name}`). Response: the returned value `res` is used directly as filename: `pdfUrl = Z + res` where Z = "https://app.aulacn.com/pdf/". The axios response interceptor probably unwraps `response.data` — I should check the response interceptor to know the shape (maybe {code, data}).
+
+- Firmware API: `get` with url = `_0x453b(0xf5) + _0x453b(0xf6) + productName`. Need to decode those two strings from index-FdpB5Nbp.js. The array rotates though. Let me decode by simulating the rotation in Node/JS via Exec, or write the decode manually.
+
+Actually easier: run a small JS snippet in the Exec tool that implements the string decode function (custom base64 + decodeURIComponent) and simulates the array rotation to find the final mapping. The rotation loop condition: checksum equals 0x523a6. But I can brute force: try all rotations, decode entries, and find which ones look like URL paths. The rotated array order matters for indices 0xf5-0xf1=4 and 0xf6-0xf1=5.
+
+Let me just simulate properly in JS:
+
+For index-FdpB5Nbp.js:
+- decoder: custom base64 alphabet 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/=' then percent-decode.
+- array A = ['z2v0rMLSzs8','nZmZnde1zxzkv0HU','mtyXodC2nfbSEMz1Ba','mJyZmta1nNbdrxbqAq','mtaYodm3ognVy1j5uG','odyWEeP0v1jl','nti3mJmYtwPbzxDA','mtHcr3vLBe8','ngfrC3bYsW','mtaWodq1t01gAuzu','nJiYoduWr0fruhb3','l3vZzxiVrvHflW']
+- rotation: while checksum(A) != 0x523a6, rotate. checksum = -parseInt(d(0xf4))/1 + parseInt(d(0xfa))/2 - parseInt(d(0xfc))/3*(parseInt(d(0xf2))/4) - parseInt(d(0xf7))/5*(parseInt(d(0xf1))/6) - parseInt(d(0xf8))/7 + parseInt(d(0xf9))/8 - parseInt(d(0xf3))/9*(-parseInt(d(0xfb))/10)
+
+Wait — in the checksum, d(i) uses the current rotation state too. The decoded strings contain embedded digit prefixes like "70160budAcl" style? Looking at version-DZbqs6RB.deob.js, the deobfuscator replaced the checksum strings with plain literals like "70160budAcl" — parseInt of those gives numbers like 70160 (parseInt stops at first non-digit). So decoded strings start with digits.
+
+Simplest: run the actual original JS file in a JS runtime? The file uses ESM import from './index-ittJ_Bat.js' — can't easily run.
+
+Instead simulate: I'll write a small JS in Exec implementing decode + rotation loop with parseInt on decoded strings. parseInt of a decoded string like "1234abc" = 1234. NaN for non-digit-start strings — but the arithmetic uses NaN → checksum NaN ≠ target → keep rotating. Hmm, but rotation continues until match; with only 12 entries, brute force all 12 rotations and print which rotation index gives checksum === 0x523a6.
+
+Let me do that. Also do the same for the PDF file to confirm `method` value at 0x15f ('get' probably) — actually in the PDF file, url is plain: '/user/PDF/'+'getFileNam'+'e', method = _0x53b8f3(0x15f) which decodes to 'get' presumably (doc says GET). Fine.
+
+And also confirm Z (pdfUrl prefix) and au (commonAssets prefix) constants in index.deob2.js — search for "app.aulacn" already showed matches at line 1 (omitted). The C# already has these prefixes: https://app.aulacn.com/pdf/ and /commonAssets/. Let me verify via grep to be safe.
+
+Also check the response interceptor to know response shape: e5.interceptors.response... Let me extract context after that baseURL snippet to see how responses are unwrapped (e.g., return res.data.data or res.data).
+
+The second `interceptors` occurrence search failed due to out-of-range index arithmetic (Substring($k2+300, 1200) probably exceeded). Let me search for the response interceptor and getFileName usage more carefully. Actually the key remaining questions:
+
+1. Firmware endpoint URL path (from index-FdpB5Nbp.js decode) — decode `_0x453b(0xf5)+_0x453b(0xf6)`.
+2. Response interceptor shape — how `res` is unwrapped (res is directly the filename for PDF; {version, fileName} for firmware).
+
+Let me use the Exec tool (code_mode) to run JS — it's cleaner for decoding. And also extract the response interceptor via PowerShell with careful bounds.
+
+解码成功：固件接口是 `GET /user/EXE/getFile/{产品名}`，PDF 接口是 `GET /user/PDF/getFileName?pid=&vid=&productName=`，baseURL 是 `https://hubapi.aulacn.com/`。再确认响应拦截器如何解包返回值。
+Decoded:
+- Firmware API: `GET {baseURL}/user/EXE/getFile/{productName}` (url = '/user/EXE/' + 'getFile/' + productName)
+- PDF API: `GET {baseURL}/user/PDF/getFileName?pid=NAME&vid=NAME&productName=NAME` (method 'get', confirmed by decoded 'get')
+- baseURL: `https://hubapi.aulacn.com/`
+
+Now the response shape. In version-DZbqs6RB.deob.js:
+- `_0x619095({pid,vid,productName}).then(res => { pdfUrl = Z + res; })` — so `res` is directly a string filename. This means the axios instance's response interceptor unwraps to the data payload.
+- `_0x2af24c(productName).then(res => { latestVersion = res.version; downloadUrl = au + res.fileName; })` — res = {version, fileName}.
+
+Let me check the response interceptor in index.deob2.js to see exactly what it returns — whether it's res.data directly or res.data.data. The axios create was: e5 with baseURL hubapi. Let me extract the section after `e5["interceptors"]...request...use(...)` for the response interceptor. Earlier extraction showed the request interceptor adding Bearer token. Need response part. Let me search for "interceptors" occurrences around index 252772 area.
+
+响应解包逻辑也确认了：`{code:1, data:...}` 直接取 `data`。全部接口细节齐了，先验证一下云端接口真实可用，同时看下 csproj 配置。
+Response interceptor logic:
+```js
+response => {
+  const data = response.data;
+  if (data.code !== undefined) {
+    return data.code === 1 ? data.data : reject(data.data after showing msg);
+  }
+  return response.status === 200 ? data : reject(data);
+}
+```
+
+So response JSON shape: `{code: 1, data: <payload>, msg?}` → payload returned directly.
+
+So:
+- PDF: GET https://hubapi.aulacn.com/user/PDF/getFileName?pid=MINI60&vid=MINI60&productName=MINI60 → {code:1, data:"MINI60.pdf"} → pdfUrl = "https://app.aulacn.com/pdf/" + data
+- Firmware: GET https://hubapi.aulacn.com/user/EXE/getFile/MINI 60 HE MAX → {code:1, data:{version:"x.y.z", fileName:"..."}} → downloadUrl = "https://app.aulacn.com/commonAssets/" + fileName
+
+Note: auth header only if token exists; these endpoints likely public. Timeout 20s.
+
+Let me quickly verify with a live request (optional but good — user would appreciate a real filename). I could use WebFetch or curl to test: https://hubapi.aulacn.com/user/PDF/getFileName?pid=MINI60&vid=MINI60&productName=MINI60
+
+Let me test both endpoints quickly with curl via Shell. Actually WebFetch converts to markdown; JSON should come through. curl is simpler.
+
+Then implement in C#:
+
+Plan:
+1. ProductCatalog.cs:
+   - Add ApiBaseUrl = "https://hubapi.aulacn.com/".
+   - Add async methods: GetPdfFileNameAsync(name) → GET user/PDF/getFileName?pid={name}&vid={name}&productName={name}; GetFirmwareInfoAsync(name) → GET user/EXE/getFile/{urlencoded name}.
+   - Parse response: {code:1, data:...}. Use System.Text.Json.
+2. Program.cs: after reading device info, call these APIs and print real PDF link + firmware version/download URL. Keep it resilient: on failure, fall back to candidates.
+3. DeviceInfoPrinter: replace the "本地暂缺" note with actual results; move API calls into Program or into ProductCatalog.
+
+Where to put HTTP logic? A new file or inside ProductCatalog? ProductCatalog is in Devices/. HTTP client usage — maybe create a small static class CloudCatalog in Devices or Firmware namespace. The instruction: avoid creating files unless necessary. I can extend ProductCatalog.cs with the HTTP methods. It's reasonable — it's the "cloud product catalog".
+
+C# project: net10.0 console. HttpClient via static instance. Need `using System.Net.Http; using System.Text.Json;` — with ImplicitUsings probably enabled (check csproj). Let me check the csproj quickly.
+
+Also Program.cs currently is top-level statements with local function FallbackOpenOtherInterface. I'll add calls:
+
+```csharp
+var pdfLink = await ProductCatalog.ResolvePdfUrlAsync(hit.Definition);
+var firmware = await ProductCatalog.ResolveFirmwareAsync(hit.Definition);
+```
+
+But Program.cs is top-level — await works in top-level. DeviceInfoPrinter.PrintPdfLink(definition) currently prints candidates + the "本地暂缺" note. I'll restructure:
+
+- ProductCatalog.ResolvePdfUrlAsync(def): string? — calls API, returns PdfBaseUrl + fileName; fallback candidates if fail.
+- ProductCatalog.ResolveFirmwareInfoAsync(def): (string Version, string FileName)? — calls API.
+- DeviceInfoPrinter.PrintPdfLink stays as sync printer but I can change signature to accept resolved values. Simpler: make PrintPdfLink async? Printers doing HTTP is ugly. Better: Program fetches cloud info, passes to printer.
+
+New design:
+
+```csharp
+// ProductCatalog.cs
+public static class ProductCatalog
+{
+    public const string PdfBaseUrl = "https://app.aulacn.com/pdf/";
+    public const string CommonAssetsBaseUrl = "https://app.aulacn.com/commonAssets/";
+    /// <summary>网页驱动 axios 实例的 baseURL（index-ittJ_Bat.js 常量 ea）。</summary>
+    public const string ApiBaseUrl = "https://hubapi.aulacn.com/";
+
+    private static readonly HttpClient Http = CreateClient();
+
+    private static HttpClient CreateClient()
+    {
+        var c = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        c.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0");  // maybe not needed
+        return c;
+    }
+
+    // GET /user/PDF/getFileName?pid={name}&vid={name}&productName={name}
+    public static async Task<string?> FetchPdfFileNameAsync(string productName, CancellationToken ct = default)
+    {
+        var url = $"{ApiBaseUrl}user/PDF/getFileName?pid={Uri.EscapeDataString(productName)}&vid={Uri.EscapeDataString(productName)}&productName={Uri.EscapeDataString(productName)}";
+        using var doc = await ReadJsonAsync(url, ct);
+        return doc?.RootElement.ValueKind == JsonValueKind.String ? doc.Value.GetString() : doc?.RootElement.ToString();
+    }
+    ...
+}
+```
+
+Hmm, need to be careful with the JSON unwrap: response = {code:1, data:X, msg}. data for PDF is a string; for firmware it's an object {version, fileName}.
+
+Write a small helper:
+
+```csharp
+private static async Task<JsonElement?> FetchDataAsync(string url, CancellationToken ct)
+{
+    using var resp = await Http.GetAsync(url, ct);
+    var body = await resp.Content.ReadAsStringAsync(ct);
+    using var doc = JsonDocument.Parse(body);
+    var root = doc.RootElement;
+    if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("code", out var code))
+    {
+        if (code.ValueKind == JsonValueKind.Number && code.GetInt32() == 1 &&
+            root.TryGetProperty("data", out var data))
+        {
+            return data.Clone();
+        }
+        return null;
+    }
+    return resp.IsSuccessStatusCode ? root.Clone() : null;
+}
+```
+
+Wait — clone needed since doc disposed. Return string via data.GetString() etc.
+
+Then:
+
+```csharp
+public static async Task<string?> ResolvePdfUrlAsync(AulaKeyboardDevice definition, CancellationToken ct = default)
+{
+    var name = GetPdfProductName(definition);
+    var fileName = await FetchPdfFileNameAsync(name, ct);
+    return fileName is null ? null : $"{PdfBaseUrl}{fileName}";
+}
+
+public sealed record FirmwareRelease(string Version, string DownloadUrl);
+
+public static async Task<FirmwareRelease?> ResolveFirmwareAsync(AulaKeyboardDevice definition, CancellationToken ct = default)
+{
+    var name = GetFirmwareProductName(definition);
+    if (string.IsNullOrEmpty(name)) return null;
+    var url = $"{ApiBaseUrl}user/EXE/getFile/{Uri.EscapeDataString(name)}";
+    var data = await FetchDataAsync(url, ct);
+    if (data is null || data.Value.ValueKind != JsonValueKind.Object) return null;
+    var version = data.Value.TryGetProperty("version", out var v) ? v.GetString() : null;
+    var fileName = data.Value.TryGetProperty("fileName", out var f) ? f.GetString() : null;
+    if (string.IsNullOrEmpty(fileName)) return null;
+    return new FirmwareRelease(version ?? "", $"{CommonAssetsBaseUrl}{fileName}");
+}
+```
+
+Then DeviceInfoPrinter: modify PrintPdfLink to accept (definition, pdfUrl, firmware) or add a new method PrintCloudInfo. The current PrintPdfLink prints mapping info + candidates + "本地暂缺" note. I'll change to:
+
+```csharp
+public static void PrintPdfLink(AulaKeyboardDevice definition, string? pdfUrl, ProductCatalog.FirmwareRelease? firmware)
+{
+    ... print mapping ...
+    Console.WriteLine($"  说明书 PDF   : {pdfUrl ?? "(云端查询失败)"}");
+    if (firmware != null)
+    {
+        Console.WriteLine($"  最新固件     : {firmware.Version}");
+        Console.WriteLine($"  固件下载     : {firmware.DownloadUrl}");
+    }
+    ...
+}
+```
+
+Keep candidate URLs as fallback when pdfUrl is null.
+
+Program.cs: 
+```csharp
+var pdfUrl = await ProductCatalog.ResolvePdfUrlAsync(hit.Definition);
+var firmware = await ProductCatalog.ResolveFirmwareAsync(hit.Definition);
+DeviceInfoPrinter.PrintPdfLink(hit.Definition, pdfUrl, firmware);
+```
+
+Should network failures crash? Wrap in try/catch inside Resolve methods returning null. Better: catch HttpRequestException/TaskCanceledException/JsonException inside FetchDataAsync → return null.
+
+Check csproj for ImplicitUsings to know if System.Net.Http/System.Text.Json need explicit usings. System.Net.Http is part of implicit usings for net6+ (System.Net.Http is included in default implicit usings? The default set: System, System.Collections.Generic, System.IO, System.Linq, System.Net.Http, System.Threading, System.Threading.Tasks). Yes System.Net.Http included. System.Text.Json is NOT — need explicit using.
+
+Note the fallback candidates logic exists in GetPdfUrlCandidates; keep for fallback path.
+
+First verify endpoints live with curl. GET https://hubapi.aulacn.com/user/PDF/getFileName?pid=MINI60&vid=MINI60&productName=MINI60 and https://hubapi.aulacn.com/user/EXE/getFile/MINI%2060%20HE%20MAX.
+
+Let me check csproj + test endpoints in parallel.
+
+两个云端接口都验证通了：
+- PDF 文件名真实返回：`MINI 60 HE 三模磁轴键盘-说明书电子版.pdf`
+- 固件真实返回：`V1.52` / `MINI 60 HE MAX_V1.52.exe`
+
+现在把真实接口实现进 C# 代码，替换掉硬编码的“本地暂缺”。
+Both endpoints work:
+- PDF: data = "MINI 60 HE 三模磁轴键盘-说明书电子版.pdf" → https://app.aulacn.com/pdf/MINI 60 HE 三模磁轴键盘-说明书电子版.pdf
+- Firmware: {version:"V1.52", fileName:"MINI 60 HE MAX_V1.52.exe", ...} → https://app.aulacn.com/commonAssets/MINI 60 HE MAX_V1.52.exe
+
+Now implement:
+
+1. ProductCatalog.cs — add ApiBaseUrl, HttpClient, FetchDataAsync, ResolvePdfUrlAsync, ResolveFirmwareAsync + FirmwareRelease record. Keep GetPdfUrlCandidates as fallback.
+2. DeviceInfoPrinter.cs — PrintPdfLink signature: (definition, pdfUrl, firmware). Remove "本地暂缺" note.
+3. Program.cs — call the async resolvers, pass into printer.
+
+ImplicitUsings enable → System.Net.Http included; need `using System.Text.Json;`.
+
+Let me set up todos and implement.
+
+Now add the cloud API methods. Insert after GetPdfUrlCandidates / before HasName. Also add FirmwareRelease record. Update GetPdfUrlCandidates doc comment to reflect it's now a fallback.
+
+Now Program.cs — update to call the async resolvers and pass results to PrintPdfLink. Query cloud in parallel (both independent).
+
+Build succeeded (only pre-existing HIDSharp warnings). Done. Summarize:
+
+The "本地暂缺" note was wrong — the JS files exist at web/assets. What was actually "missing" was the implementation: the C# code hadn't been wired to the cloud API. Now implemented:
+
+- Extracted from obfuscated JS: baseURL https://hubapi.aulacn.com/, PDF endpoint GET /user/PDF/getFileName?pid=&vid=&productName= (all three = product name), firmware endpoint GET /user/EXE/getFile/{name}, response unwrap {code:1, data}.
+- ProductCatalog.ResolvePdfUrlAsync / ResolveFirmwareAsync
+- DeviceInfoPrinter prints real results, falls back to candidate links on failure
+- Program calls both in parallel.
+
+Mark todo 4 complete and summarize. Also update memory? The memory guidance: project-level info could be appended. There's an existing topics entry about hid-js-docs. This is a notable project decision — could add to project_memory.md briefly. The instructions say when user says "remember" only. I'll skip proactive memory write... Actually the memory guidance says append when user says "remember my xxx". Not required here. Skip.
+
+修好了。你说得对——`index-DUu2k-Ps.js` / `index-FdpB5Nbp.js` 一直在 `web\assets\` 里，之前的“本地暂缺”其实是**当时没把这两个文件的接口逻辑反出来**，只在 C# 里留了句注释和猜测的候选直链。
+
+**我从这两个混淆文件里解出的真实接口**（已用 curl 验证可用）：
+
+| 项 | 值 |
+|---|---|
+| API 域名 | `https://hubapi.aulacn.com/`（主包 axios baseURL） |
+| PDF 文件名 | `GET /user/PDF/getFileName?pid={名}&vid={名}&productName={名}`（三个参数都传产品检索名） |
+| 固件信息 | `GET /user/EXE/getFile/{产品检索名}` → `{version, fileName}` |
+| 响应约定 | `{code:1, data:...}` 直接取 `data`（网页驱动响应拦截器逻辑） |
+
+实测返回：
+- PDF：`MINI 60 HE 三模磁轴键盘-说明书电子版.pdf`
+- 固件：`V1.52` / `MINI 60 HE MAX_V1.52.exe`
+
+**代码改动**：
+
+1. [ProductCatalog.cs](file:///d:/code/aicode/hidtest/aula/Devices/ProductCatalog.cs#L130-L175) — 新增 `ResolvePdfUrlAsync` / `ResolveFirmwareAsync`，完整复刻网页驱动的 `getPDF()` / `getDownloadUrl()`，含 `{code:1}` 解包和 20s 超时，失败返回 null
+2. [DeviceInfoPrinter.cs](file:///d:/code/aicode/hidtest/aula/Output/DeviceInfoPrinter.cs#L27-L67) — 删掉“本地暂缺”注释，改为打印云端返回的真实 PDF 链接 + 最新固件版本/下载地址；云端失败时才退回候选直链
+3. [Program.cs](file:///d:/code/aicode/hidtest/aula/Program.cs#L49-L54) — 两个云端查询并行发起后交给打印机
+
+编译通过（仅 HIDSharp 原有的旧警告）。现在直接跑 `dotnet run` 就能拿到真实文件名了。

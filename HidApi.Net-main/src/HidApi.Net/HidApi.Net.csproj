@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <VersionPrefix>1.2.0</VersionPrefix>
+
+    <RootNamespace>HidApi</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <Authors>Marcel Tiede</Authors>
+    <Copyright>Marcel Tiede</Copyright>
+    <owners>badcel</owners>
+
+    <Description>A modern cross platform C# binding for HIDAPI</Description>
+    <PackageProjectUrl>https://github.com/badcel/HidApi.Net</PackageProjectUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+
+    <PackageReadmeFile>readme.md</PackageReadmeFile>
+    <PackageTags>hid;usb;binding</PackageTags>
+    <IsAotCompatible>true</IsAotCompatible>
+    
+    <!-- Define path to WChart.Net source code for local development -->
+    <WCharTSource />
+  </PropertyGroup>
+  
+  <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Condition="'$(WCharTSource)' != ''" Include="$(WCharTSource)/src/WCharT.Net/WCharT.Net.csproj" />
+    <PackageReference Condition="'$(WCharTSource)' == ''" Include="WCharT.Net" />
+    
+    <InternalsVisibleTo Include="$(AssemblyName).Tester" />
+    <None Include="../../readme.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS0618;CS0649</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\HIDSharp264\HidSharp\HidSharp.NETStandard.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine"/>
+    <ProjectReference Include="..\HidApi.Net\HidApi.Net.csproj"/>
+  </ItemGroup>
+</Project>

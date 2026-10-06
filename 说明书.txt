@@ -1,0 +1,34 @@
+HIDSharp264 文件夹是  HIDSharp的源码
+D:\code\aicode\hidtest\web 是键盘在线驱动的web 代码
+
+接下来的键盘hid 开发要用写在 D:\code\aicode\hidtest\aula  ， hid操作库 用  HIDSharp ，
+
+
+
+### 有线键盘
+
+AULA 键盘扫描（MINI60 系列）
+========================================
+
+共识别到 1 台设备：
+
+[1] 型号: MINI60HE MAX
+    VID=0x0C45  PID=0x80A1
+    usagePage=0xFF68  usage=0x0061
+    无线: 否   设备类型: 键盘
+    产品名: MINI60HE MAX
+    路径: \\?\hid#vid_0c45&pid_80a1&mi_02#8&5b34bc6&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}
+
+
+### 无线键盘
+
+AULA 键盘扫描（MINI60 系列）
+========================================
+共识别到 1 台设备：
+
+[1] 型号: MINI60HE MAX Dongle
+    VID=0x0C45  PID=0xFEFC
+    usagePage=0xFF80  usage=0x0001
+    无线: 是   设备类型: 键盘
+    产品名: MINI60HE MAX Dongle
+    路径: \\?\hid#vid_0c45&pid_fefc&mi_03#8&1ea5a0a0&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}
